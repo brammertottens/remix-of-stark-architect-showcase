@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
     "verify-packages": "node scripts/verify-packages.js",
     "security-audit": "npm audit --audit-level=moderate",
     "security-check": "npm run verify-packages && npm run security-audit",
