@@ -2,101 +2,131 @@
 
 This document outlines the security measures implemented for package integrity verification and supply chain attack prevention.
 
+> **Runtime note:** This project uses **Bun** as its JavaScript runtime. npm-compatible configuration files (`.npmrc`, `package-lock.json`) are maintained for security tooling compatibility (e.g., `npm audit`).
+
+## Quick Start
+
+```bash
+# 1. Install dependencies (scripts are blocked by .npmrc ignore-scripts=true)
+bun install
+
+# 2. Verify package integrity & run security audit
+node scripts/verify-packages.js
+
+# 3. Rebuild only trusted packages (selective script execution)
+node scripts/run-trusted-scripts.js
+
+# 4. Start development
+bun run dev
+```
+
+## Architecture Overview
+
+```
+.npmrc                        ← Blocks all install scripts by default
+trusted-packages.json         ← Whitelist of packages allowed to run scripts
+scripts/verify-packages.js    ← Integrity hashes, audit, .npmrc, trusted config checks
+scripts/run-trusted-scripts.js ← Selectively rebuilds only trusted packages
+```
+
+### Security Flow
+
+1. **Install** — `bun install` (or `npm ci --ignore-scripts`) installs packages with all scripts blocked.
+2. **Verify** — `verify-packages.js` checks integrity hashes, runs `npm audit`, validates `.npmrc` and `trusted-packages.json`.
+3. **Rebuild trusted** — `run-trusted-scripts.js` runs `npm rebuild` only for packages listed in `trusted-packages.json`.
+
 ## Package Integrity Verification
 
-### Overview
+### What verify-packages.js checks
 
-This project implements comprehensive package integrity verification to prevent supply chain attacks through:
+| Check | Description |
+|-------|-------------|
+| **Integrity hashes** | All packages in `package-lock.json` have SHA-512 hashes |
+| **Security audit** | No critical/high vulnerabilities via `npm audit` |
+| **Signature support** | npm version supports package signature verification |
+| **.npmrc config** | Required security settings are present (`ignore-scripts`, `strict-ssl`, etc.) |
+| **Trusted packages** | `trusted-packages.json` is valid and entries are complete |
 
-1. **SHA-512 Integrity Hashes**: All packages in `package-lock.json` include cryptographic hashes
-2. **npm Security Configuration**: Strict `.npmrc` settings enforce security best practices
-3. **Automated Verification**: Scripts verify package integrity before builds
-4. **Security Auditing**: Integration with npm audit for vulnerability scanning
-
-### Security Configuration (.npmrc)
-
-The `.npmrc` file configures npm with security-focused settings:
-
-| Setting | Purpose |
-|---------|---------|
-| `audit-level=moderate` | Blocks installations with moderate+ vulnerabilities |
-| `save-exact=true` | Prevents automatic version updates to potentially compromised versions |
-| `package-lock=true` | Ensures package-lock.json is always used |
-| `engine-strict=true` | Enforces Node.js version requirements |
-| `prefer-offline=true` | Prefers cached packages, reducing network attack surface |
-| `strict-ssl=true` | Enforces SSL verification for registry connections |
-
-### Running Security Verification
-
-#### Manual Verification
-
-Run the package verification script:
+### Running verification
 
 ```bash
 node scripts/verify-packages.js
 ```
 
-This script:
-- Verifies all packages have SHA-512 integrity hashes
-- Runs npm audit for known vulnerabilities
-- Checks npm signature verification support
-- Validates .npmrc security configuration
+## .npmrc Security Configuration
 
-#### Security Audit
+| Setting | Purpose |
+|---------|---------|
+| `ignore-scripts=true` | **Blocks all package install scripts** — core security control |
+| `audit=true` | Enables security audits during installation |
+| `audit-level=moderate` | Blocks installations with moderate+ vulnerabilities |
+| `save-exact=true` | Prevents automatic version updates to compromised versions |
+| `package-lock=true` | Ensures package-lock.json is always used |
+| `engine-strict=true` | Enforces Node.js version requirements |
+| `prefer-offline=true` | Prefers cached packages, reducing network attack surface |
+| `optional=false` | Prevents optional dependencies from installing automatically |
+| `strict-ssl=true` | Enforces SSL verification for registry connections |
 
-Run a comprehensive security audit:
+## Trusted Packages
 
-```bash
-npm audit
+Only packages listed in `trusted-packages.json` are allowed to execute scripts after verification. The file structure:
+
+```json
+{
+  "lastReviewed": "2025-02-17",
+  "reviewCadence": "quarterly",
+  "packages": [
+    {
+      "name": "esbuild",
+      "reason": "Requires post-install script to download platform-specific binary",
+      "lastReviewed": "2025-02-17"
+    }
+  ]
+}
 ```
 
-For automatic fixes (when safe):
+### Adding a trusted package
 
-```bash
-npm audit fix
-```
+1. Verify the package genuinely requires install scripts
+2. Review what scripts the package executes
+3. Add an entry to `trusted-packages.json` with a clear justification
+4. Update `lastReviewed` date
+5. Commit and request security review
 
-### Package.json Scripts (Manual Addition Required)
+### Quarterly review
 
-Add these scripts to your `package.json` for integrated security checks:
+Every 90 days, review all trusted packages:
+- Is the package still needed?
+- Are the scripts still required?
+- Has the package changed ownership or maintainers?
+- Update `lastReviewed` dates
+
+## GitHub-Side Configuration (Manual Steps)
+
+The following must be configured directly in your GitHub repository:
+
+### 1. package.json scripts
+
+Add these scripts to `package.json` via GitHub:
 
 ```json
 {
   "scripts": {
     "verify-packages": "node scripts/verify-packages.js",
+    "run-trusted-scripts": "node scripts/run-trusted-scripts.js",
+    "security-check": "node scripts/verify-packages.js && node scripts/run-trusted-scripts.js",
     "security-audit": "npm audit --audit-level=moderate",
-    "security-check": "npm run verify-packages && npm run security-audit",
-    "predev": "npm run verify-packages",
-    "prebuild": "npm run verify-packages"
+    "predev": "node scripts/verify-packages.js",
+    "prebuild": "node scripts/verify-packages.js"
   }
 }
 ```
 
-### Regenerating package-lock.json
+### 2. CI/CD Pipeline (GitHub Actions)
 
-If you need to regenerate `package-lock.json` with fresh integrity hashes:
-
-```bash
-# 1. Delete existing files
-rm -rf node_modules package-lock.json
-
-# 2. Reinstall packages (generates new integrity hashes)
-npm install
-
-# 3. Verify integrity hashes
-node scripts/verify-packages.js
-
-# 4. Commit the updated lockfile
-git add package-lock.json
-git commit -m "chore: regenerate package-lock.json with integrity hashes"
-```
-
-### CI/CD Integration
-
-Add security verification to your CI/CD pipeline:
+Create `.github/workflows/security.yml`:
 
 ```yaml
-# Example GitHub Actions workflow
 name: Security Check
 
 on: [push, pull_request]
@@ -106,77 +136,85 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '20'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
+          bun-version: latest
+
+      - name: Install dependencies (scripts blocked)
+        run: bun install
+
       - name: Verify package integrity
         run: node scripts/verify-packages.js
-      
+
+      - name: Run trusted package scripts
+        run: node scripts/run-trusted-scripts.js
+
       - name: Run security audit
         run: npm audit --audit-level=high
 ```
 
-### Handling Security Failures
+## Regenerating package-lock.json
 
-#### Integrity Hash Failures
+```bash
+# 1. Delete existing lockfile
+rm -rf node_modules package-lock.json
 
-If packages are missing integrity hashes:
+# 2. Reinstall (generates fresh integrity hashes; scripts remain blocked)
+bun install
 
-1. Regenerate `package-lock.json` as described above
-2. If issues persist, check for local or private packages that may not have registry hashes
+# 3. Verify
+node scripts/verify-packages.js
 
-#### Audit Failures
+# 4. Commit
+git add package-lock.json
+git commit -m "chore: regenerate package-lock.json with integrity hashes"
+```
 
-For vulnerabilities found by npm audit:
+## Handling Failures
 
-1. **Critical/High**: Must be fixed before deployment
-   - Run `npm audit fix` for automatic fixes
-   - For breaking changes: `npm audit fix --force` (review changes carefully)
-   - If no fix available, consider alternative packages
+### Integrity hash failures
 
-2. **Moderate**: Should be fixed, but may not block deployment
-   - Schedule fixes for next release
-   - Document accepted risks if deferring
+1. Regenerate `package-lock.json` as above
+2. If issues persist, check for local/private packages without registry hashes
 
-3. **Low/Info**: Address during regular maintenance
+### Audit failures
 
-### Adding New Packages
+| Severity | Action |
+|----------|--------|
+| **Critical/High** | Must fix before deployment — `npm audit fix` |
+| **Moderate** | Schedule for next release; document accepted risk |
+| **Low/Info** | Address during regular maintenance |
 
-Security checklist when adding new packages:
+### Trusted script failures
 
-- [ ] Check package popularity and maintenance status on npm
-- [ ] Review package dependencies for known vulnerabilities
-- [ ] Verify package publisher identity when possible
+1. Check the package is listed in `trusted-packages.json`
+2. Verify the package version matches what's installed
+3. Check `npm rebuild <package>` works manually
+
+## Adding New Dependencies
+
+Security checklist:
+
+- [ ] Check package popularity and maintenance on npm
+- [ ] Review dependencies for known vulnerabilities
+- [ ] Verify publisher identity
 - [ ] Run `npm audit` after installation
-- [ ] Run `node scripts/verify-packages.js` to verify integrity hashes
-- [ ] Review package source code for sensitive packages
-- [ ] Consider package alternatives with fewer dependencies
+- [ ] Run `node scripts/verify-packages.js`
+- [ ] If package needs install scripts, add to `trusted-packages.json` with justification
+- [ ] Review package source for sensitive packages
 
-### Reporting Security Issues
-
-If you discover a security vulnerability in this project:
+## Reporting Security Issues
 
 1. **Do NOT** open a public issue
-2. Email the security concern to the maintainers directly
-3. Include steps to reproduce and potential impact
+2. Email security concerns to maintainers directly
+3. Include reproduction steps and potential impact
 4. Allow reasonable time for a fix before public disclosure
-
-## Additional Resources
-
-- [npm Security Best Practices](https://docs.npmjs.com/packages-and-modules/securing-your-code)
-- [OWASP Dependency Check](https://owasp.org/www-project-dependency-check/)
-- [Snyk Security](https://snyk.io/)
-- [Socket.dev](https://socket.dev/) - Supply chain security
 
 ## Version History
 
 | Date | Version | Changes |
 |------|---------|---------|
 | 2024 | 1.0.0 | Initial security configuration |
+| 2025 | 2.0.0 | Added ignore-scripts enforcement, trusted packages, Bun runtime docs |
