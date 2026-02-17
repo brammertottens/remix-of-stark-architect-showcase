@@ -25,6 +25,8 @@ const About = () => {
                     Founded in 2015, our studio has completed over 200 projects across 
                     residential, commercial, and cultural sectors. Each project begins 
                     with careful listening and ends with thoughtful execution.
+
+                    Adding this line to force a rebuild of the preview
                   </p>
                 </div>
               </div>
