@@ -1,0 +1,22 @@
+{
+  "$schema": "Trusted packages allowed to execute install scripts after verification",
+  "lastReviewed": "2025-02-17",
+  "reviewCadence": "quarterly",
+  "packages": [
+    {
+      "name": "esbuild",
+      "reason": "Requires post-install script to download platform-specific binary for bundling",
+      "lastReviewed": "2025-02-17"
+    },
+    {
+      "name": "@esbuild",
+      "reason": "Platform-specific esbuild binaries installed via postinstall hooks",
+      "lastReviewed": "2025-02-17"
+    },
+    {
+      "name": "vite",
+      "reason": "Build tooling that depends on esbuild postinstall for binary setup",
+      "lastReviewed": "2025-02-17"
+    }
+  ]
+}
